@@ -1,0 +1,28 @@
+# Environment Variables
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+env/
+.venv/
+.pytest_cache/
+
+# Processing Data & Artifacts
+processing/
+
+# Frontend (Node)
+Frontend/node_modules/
+Frontend/dist/
+Frontend/build/
+Frontend/.npm/
+Frontend/.eslintcache
+
+# OS / IDE
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

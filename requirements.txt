@@ -1,0 +1,22 @@
+# Core extraction / data handling
+openpyxl==3.1.5
+pandas==2.2.3
+pdfplumber==0.11.9
+rostaing-ocr==1.2.2
+pymupdf4llm>=1.28.0
+
+# LLM extraction (required for universal PDF extraction)
+openai>=1.0.0
+python-dotenv>=1.0.0
+
+# .xls file support (optional, for legacy census files)
+xlrd>=2.0.0
+
+# Optional alternative PDF backend (uncomment if you prefer PyMuPDF over
+# pdfplumber -- see pdf_extractor.py's _read_pages() for the swap point).
+# PyMuPDF==1.24.10
+
+# Backend API
+fastapi>=0.100.0
+uvicorn>=0.23.0
+python-multipart>=0.0.6
