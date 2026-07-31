@@ -17,6 +17,13 @@ All files (input copies, extracted data, output) are stored under processing/.
 """
 from __future__ import annotations
 
+# IMPORTANT: Import torch first on Windows to prevent DLL initialization conflicts (WinError 1114)
+# if other C-extensions like PyMuPDF (fitz) are loaded before it.
+try:
+    import torch
+except ImportError:
+    pass
+
 import argparse
 import shutil
 import sys
@@ -24,7 +31,7 @@ from pathlib import Path
 
 import config
 from census_extractor import extract_census, save_census_to_excel
-from pdf_extractor import extract_employee_benefits, save_pdf_to_excel
+from pdf_extractor import extract_employee_benefits
 from reconcile import match_employees
 from fill_template import fill_template
 from report import build_report, write_json_report, write_csv_report

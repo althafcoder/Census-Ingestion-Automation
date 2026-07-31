@@ -131,7 +131,8 @@ CENSUS_HEADER_ALIASES = {
     "gender":                       ["gender", "sex"],
     "dob":                          ["date of birth", "dob", "birth date", "birthdate", "birth"],
     "home_zip":                     ["home zip", "zip code", "zip", "postal code", "home zip code"],
-    "relationship":                 ["relationship", "relation", "relationship to employee", "type", "ee/dep"],
+    "relationship":                 ["relationship", "relation", "relationship to employee", "type", "ee/dep",
+                                     "enrollee type", "enrolleetype", "member type", "subscriber type"],
     "dependent_of_employee_number": ["dependent of", "dependent of employee number", "dependent of employee", "subscriber", "subscriber #"],
     "medical_coverage_tier":        ["medical coverage tier", "medical tier", "medical dep status", "med tier", "medical"],
     "cobra":                        ["cobra", "cobra status"],
@@ -143,8 +144,8 @@ CENSUS_HEADER_ALIASES = {
     "vision_coverage_tier":         ["vision coverage tier", "vision tier", "vision dep status", "vision"],
     "vision_plan_enrolled":         ["vision plan enrolled", "vision plan"],
     "vision_plan_price":            ["vision plan price", "vision price", "vision premium"],
-    "life_plan_name":               ["life plan", "life", "life plan name", "life volume", "basic life", "life insurance"],
-    "life_benefit":                 ["life benefit", "life amount", "life vol"],
+    "life_plan_name":               ["life plan", "life", "life plan name", "basic life", "life insurance"],
+    "life_benefit":                 ["life benefit", "life amount", "life vol", "life volume", "lifevolume"],
     "life_rate":                    ["life rate", "life premium", "life cost"],
     "ltd_plan":                     ["ltd plan", "ltd", "long term disability"],
     "ltd_benefit":                  ["ltd benefit", "ltd amount"],
@@ -157,6 +158,7 @@ CENSUS_HEADER_ALIASES = {
     "workers_comp_code":            ["workers comp", "workers comp code", "wc code", "comp code"],
     "annual_salary":                ["annual salary", "salary", "annual", "annual compensation"],
     "ft_pt":                        ["ft/pt", "full time", "part time", "employment status", "employment type"],
+    "elections":                    ["elections", "election"],
 
     # --- Pivoted-census generic columns (used by census_normalizer) ---
     "product_type":                 ["product type", "plan type", "benefit type", "coverage type",
@@ -233,18 +235,32 @@ PLAN_CATEGORY_RULES = [
     ("life", ["life", "ltc rider", "whole life"]),
     ("ltd", ["ltd"]),
     ("std", ["std"]),
-    ("medical", ["aet metro", "metro ntl", "epo", "mcp", "hmo", "ppo medical", "medical"]),
+    ("medical", ["aet metro", "metro ntl", "epo", "mcp", "hmo", "ppo medical", "medical",
+                 "pos", "chc", "hdhp", "copay"]),
     ("voluntary_other", []),  # catch-all: accident/critical/hospital/legal/etc.
 ]
 
+# Minimum premium threshold — any unclassified plan with a charge >= this
+# amount will be inferred as Medical (since Dental/Vision/Life are far cheaper)
+MEDICAL_PREMIUM_INFERENCE_THRESHOLD = 200.0
+
 # Standardized tier map used by both census and pdf normalizers
 MEDICAL_TIER_MAP = {
-    # single/employee only
+    # Employee Only
     'EE': 'EE',
-    'EMP ONLY': 'EE',
+    'EMPLOYEE ONLY': 'EE',
     'SINGLE': 'EE',
+    'SUBSCRIBER ONLY': 'EE',
+    'SUBSCRIBER': 'EE',
+    'EMPLOYEE': 'EE',
+    'OWNER': 'EE',
+    'EMP ONLY': 'EE',
     'INDIVIDUAL': 'EE',
     'IND': 'EE',
+    'INDIVIDUAL AND CHILDREN': 'EC',
+    'INDIVIDUAL AND CHILD': 'EC',
+    'INDIVIDUAL & CHILDREN': 'EC',
+    'IND AND CHILDREN': 'EC',
     'E': 'EE',
     'PARTICIPANT': 'EE',
     'PPT': 'EE',
@@ -254,8 +270,12 @@ MEDICAL_TIER_MAP = {
     'D1': 'EE',
     '1': 'EE',
     
-    # employee + spouse
+    # Employee & Spouse
     'ES': 'ES',
+    'EMPLOYEE & SPOUSE': 'ES',
+    'EMPLOYEE AND SPOUSE': 'ES',
+    'SPOUSE': 'ES',
+    'DOMESTIC PARTNER': 'ES',
     'EE+SP': 'ES',
     'EE/SP': 'ES',
     'EMP+SPOUSE': 'ES',
@@ -265,9 +285,18 @@ MEDICAL_TIER_MAP = {
     'V2': 'ES',
     'D2': 'ES',
     '2': 'ES',
+    '2P': 'ES',
+    '2A': 'ES',
     
-    # employee + child(ren)
+    # Employee & Child(ren)
     'EC': 'EC',
+    'EMPLOYEE & CHILD': 'EC',
+    'EMPLOYEE & CHILD(REN)': 'EC',
+    'EMPLOYEE AND CHILD': 'EC',
+    'EMPLOYEE + CHILD': 'EC',
+    'E1D': 'EC',
+    'E2D': 'EC',
+    'E3D': 'EC',
     'EE+CH': 'EC',
     'EE/CH': 'EC',
     'EMP+CHILD': 'EC',
@@ -277,48 +306,68 @@ MEDICAL_TIER_MAP = {
     'FPC': 'EC',
     'C': 'EC',
     'CHILD': 'EC',
-    'M3': 'EC',
-    'V3': 'EC',
-    'D3': 'EC',
-    '3': 'EC',
-    'E1D': 'EC',
-    'E2D': 'EC',
-    'E4D': 'EC',
-    'E5D': 'EC',
-    'E6D': 'EC',
-    'E7D': 'EC',
-    'E8D': 'EC',
-    'E9D': 'EC',
+    'M4': 'EC',
+    'V4': 'EC',
+    'D4': 'EC',
+    '4': 'EC',
     
-    # family
-    'FAM': 'FAM',
-    'FAMILY': 'FAM',
-    'F': 'FAM',
-    'M4': 'FAM',
-    'V4': 'FAM',
-    'D4': 'FAM',
-    '4': 'FAM',
-    'EF': 'FAM',
-    'ESC': 'FAM',
+    # Employee & Family
+    'EF': 'EF',
+    'EMPLOYEE & FAMILY': 'EF',
+    'EMPLOYEE AND FAMILY': 'EF',
+    'FAMILY': 'EF',
+    'EMPLOYEE + FAMILY': 'EF',
+    'ESC': 'EF',
+    'ESD': 'EF',
+    'E4D': 'EF',
+    'E5D': 'EF',
+    'E6D': 'EF',
+    'E7D': 'EF',
+    'E8D': 'EF',
+    'E9D': 'EF',
+    'FAM': 'EF',
+    'EMPLOYEE, SPOUSE & CHILDREN': 'EF',
+    'F': 'EF',
+    'M3': 'EF',
+    'V3': 'EF',
+    'D3': 'EF',
+    '3': 'EF',
     
-    # other
-    'NE': 'NE',
-    'RC': 'RC',
+    # Waived / Other
     'WO': 'WO',
-    'WP': 'WP'
+    'WAIVE': 'WO',
+    'WAIVED': 'WO',
+    'NE': 'WO',
+    'RC': 'WO',
+    'WP': 'WO'
 }
 
 MEDICAL_TIER_WAIVED = 'WO'
 
 DEPENDENT_RELATIONSHIP_MAP = {
+    'SUBSCRIBER': 'EE',
+    'EMPLOYEE': 'EE',
+    'OWNER': 'EE',
+    'SPOUSE': 'SP',
+    'DOMESTIC PARTNER': 'SP',
     'WIFE': 'SP',
     'HUSBAND': 'SP',
-    'SPOUSE': 'SP',
+    'CHILD': 'CH',
     'SON': 'CH',
     'DAUGHTER': 'CH',
-    'CHILD': 'CH',
-    'DOMESTIC PARTNER': 'DP',
-    'DP': 'DP',
+    'LEGAL DEPENDENT': 'CH',
+    'DP': 'SP',
+    # Verbose census values (e.g. "Enrollee Type" column)
+    'SPOUSE OF EMPLOYEE': 'SP',
+    'CHILD OF EMPLOYEE': 'CH',
+    'DOMESTIC PARTNER OF EMPLOYEE': 'SP',
+}
+
+EMPLOYMENT_STATUS_MAP = {
+    'FULL TIME': 'FT',
+    'FT': 'FT',
+    'PART TIME': 'PT',
+    'PT': 'PT',
 }
 
 # ---------------------------------------------------------------------------

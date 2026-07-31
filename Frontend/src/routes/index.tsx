@@ -77,20 +77,20 @@ const INITIAL_STEPS: PipelineStep[] = [
 
 function IngestionPage() {
   const [census, setCensus] = useState<File | null>(null);
-  const [invoice, setInvoice] = useState<File | null>(null);
+  const [invoices, setInvoices] = useState<File[]>([]);
   const [processing, setProcessing] = useState(false);
   const [steps, setSteps] = useState<PipelineStep[]>(INITIAL_STEPS);
   const [result, setResult] = useState<IngestionResult | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const canProcess = Boolean(census && invoice) && !processing;
+  const canProcess = Boolean(census && invoices.length > 0) && !processing;
 
   const statusMessage = useMemo(() => {
     if (processing) return "Processing…";
-    if (census && invoice) return "Both files ready. Click Process to begin.";
-    return "Upload both files to enable processing.";
-  }, [census, invoice, processing]);
+    if (census && invoices.length > 0) return "Files ready. Click Process to begin.";
+    return "Upload census and invoice files to enable processing.";
+  }, [census, invoices, processing]);
 
   const advanceStep = (idx: number) =>
     new Promise<void>((resolve) => {
@@ -103,7 +103,7 @@ function IngestionPage() {
     });
 
   const handleProcess = async () => {
-    if (!census || !invoice) return;
+    if (!census || invoices.length === 0) return;
     setProcessing(true);
     setError(null);
     setResult(null);
@@ -125,7 +125,7 @@ function IngestionPage() {
       if (apiBase) {
         const formData = new FormData();
         formData.append("census", census);
-        formData.append("invoice", invoice);
+        invoices.forEach((inv) => formData.append("invoices", inv));
         const res = await fetch(`${apiBase}/process`, {
           method: "POST",
           body: formData,
@@ -266,15 +266,16 @@ function IngestionPage() {
 
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">2. Invoice</CardTitle>
+              <CardTitle className="text-base">2. Invoices</CardTitle>
               <p className="text-xs text-muted-foreground">
-                Upload the invoice issued by the carrier.
+                Upload the invoice(s) issued by the carrier.
               </p>
             </CardHeader>
             <CardContent>
               <FileDropzone
-                file={invoice}
-                onFileChange={setInvoice}
+                files={invoices}
+                onFilesChange={setInvoices}
+                multiple={true}
                 accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
                 acceptLabel="PDF, Word & Images"
               />

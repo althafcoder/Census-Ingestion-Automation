@@ -28,21 +28,28 @@ config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 # Mount the output directory so the frontend can download generated files
 app.mount("/output", StaticFiles(directory=str(config.OUTPUT_DIR)), name="output")
 
+from typing import List
+
 @app.post("/process")
-def process_renewal(census: UploadFile = File(...), invoice: UploadFile = File(...)):
+def process_renewal(census: UploadFile = File(...), invoices: List[UploadFile] = File(...)):
     # Use the exact filenames uploaded by the user
     census_path = config.INPUT_DIR / census.filename
-    invoice_path = config.INPUT_DIR / invoice.filename
+    
+    invoice_paths = []
+    for invoice in invoices:
+        invoice_path = config.INPUT_DIR / invoice.filename
+        # Save uploaded files
+        with open(invoice_path, "wb") as f:
+            f.write(invoice.file.read())
+        invoice_paths.append(invoice_path)
 
-    # Save uploaded files
+    # Save census file
     with open(census_path, "wb") as f:
         f.write(census.file.read())
-    
-    with open(invoice_path, "wb") as f:
-        f.write(invoice.file.read())
 
-    # Define output files for this run using the original invoice name
-    invoice_stem = Path(invoice.filename).stem
+    # Define output files for this run using the first invoice name
+    # We will use the first invoice's stem as the prefix for all generated outputs
+    invoice_stem = Path(invoices[0].filename).stem
     prefix = invoice_stem
     output_filled = config.OUTPUT_DIR / f"{prefix}_Filled.xlsx"
     report_json = config.OUTPUT_DIR / f"{prefix}_report.json"
@@ -52,7 +59,7 @@ def process_renewal(census: UploadFile = File(...), invoice: UploadFile = File(.
 
     # Construct the arguments expected by main.run
     args = argparse.Namespace(
-        pdf=[invoice_path],
+        pdf=invoice_paths,
         census=census_path,
         template=config.DEFAULT_TEMPLATE_XLSX,
         output=output_filled,

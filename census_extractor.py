@@ -284,12 +284,31 @@ def extract_census(xlsx_path: Path) -> list[CensusRow]:
                 break
             r += 1
             continue
+            
+        if str(first_name).strip() == "#REF!" or str(last_name).strip() == "#REF!":
+            # Skip rows where spreadsheet calculation failed
+            r += 1
+            continue
 
         def get(field_name, default=None):
             col = field_cols.get(field_name)
             if col is None:
                 return default
             return _clean(ws.cell(row=r, column=col).value)
+            
+        tier_str = get("tier_generic", "")
+        med_tier = get("medical_coverage_tier")
+        den_tier = get("dental_coverage_tier")
+        vis_tier = get("vision_coverage_tier")
+        if tier_str:
+            parts = [p.strip() for p in tier_str.split(';')]
+            for p in parts:
+                if p.startswith('M'):
+                    med_tier = p
+                elif p.startswith('D'):
+                    den_tier = p
+                elif p.startswith('V'):
+                    vis_tier = p
 
         rows.append(
             CensusRow(
@@ -301,11 +320,11 @@ def extract_census(xlsx_path: Path) -> list[CensusRow]:
                 home_zip=get("home_zip"),
                 relationship=get("relationship"),
                 dependent_of_employee_number=get("dependent_of_employee_number"),
-                medical_coverage_tier=get("medical_coverage_tier"),
+                medical_coverage_tier=med_tier,
                 medical_plan_enrolled=get("medical_plan_enrolled"),
                 medical_plan_price=get("medical_plan_price"),
                 cobra=get("cobra"),
-                dental_coverage_tier=get("dental_coverage_tier"),
+                dental_coverage_tier=den_tier,
                 dental_plan_enrolled=get("dental_plan_enrolled"),
                 dental_plan_price=get("dental_plan_price"),
                 vision_coverage_tier=get("vision_coverage_tier"),
@@ -328,6 +347,28 @@ def extract_census(xlsx_path: Path) -> list[CensusRow]:
             )
         )
         r += 1
+
+    # -----------------------------------------------------------------------
+    # Infer dependent_of_employee_number when the column was not in the census
+    # -----------------------------------------------------------------------
+    # Guard: only runs when the census has no "Dependent Of" column AND
+    # relationship data is present. Censuses with the column are unaffected.
+    has_dep_of_col = "dependent_of_employee_number" in field_cols
+    has_any_relationship = any(row.relationship for row in rows)
+    
+    if not has_dep_of_col and has_any_relationship:
+        last_ee_row_index = None  # 1-based row_no of the last employee
+        for idx, row in enumerate(rows):
+            rel_upper = (row.relationship or "").strip().upper()
+            if rel_upper in ("EE", "EMPLOYEE", "") or not rel_upper:
+                # This is an employee — assign sequential row_no if missing
+                if row.row_no is None:
+                    row.row_no = idx + 1
+                last_ee_row_index = row.row_no
+            else:
+                # This is a dependent (SP, CH, etc.) — link to last employee
+                if row.dependent_of_employee_number is None and last_ee_row_index is not None:
+                    row.dependent_of_employee_number = last_ee_row_index
 
     return rows
 

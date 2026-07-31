@@ -39,6 +39,7 @@ class MergedRecord:
     match_method: str  # "exact" | "fuzzy" | "dependent_inherits_subscriber" | "unmatched" | "pdf_only" | "llm"
     discrepancies: list[str] = field(default_factory=list)
     discrepancy_status: str = ""
+    is_duplicate_name: bool = False
 
 
 def match_employees(
@@ -61,6 +62,12 @@ def match_employees(
     exact_matches_count = 0
     fuzzy_matches_count = 0
     llm_matches_count = 0
+
+    census_name_counts = {}
+    for row in census_ee_rows:
+        k = normalize_name_key(row.first_name, row.last_name)
+        if k:
+            census_name_counts[k] = census_name_counts.get(k, 0) + 1
 
     for pdf_employees in pdf_employees_list:
         unmatched_pdf_employees = pdf_employees.copy()
@@ -126,6 +133,7 @@ def match_employees(
     merged: list[MergedRecord] = []
     last_subscriber_matches: list[EmployeeBenefits] = []
     last_subscriber_summaries: list[dict] = []
+    subscriber_by_last_name = {}
 
     for row in census_rows:
         if not row.is_dependent:
@@ -137,23 +145,36 @@ def match_employees(
             last_subscriber_matches = matched_pdfs
             last_subscriber_summaries = summaries
             
+            if row.last_name:
+                subscriber_by_last_name[row.last_name.strip().lower()] = (matched_pdfs, summaries)
+            
             for summary in summaries:
+                if not summary.get("medical_plan_enrolled") and summary.get("medical_plan_price") is None:
+                    summary["medical_coverage_tier"] = "WO"
+                
                 record = MergedRecord(
                     census_row=row,
                     pdf_employee=matched_pdfs[0] if matched_pdfs else None,
                     plan_summary=summary,
                     match_method=method,
                 )
+                k = normalize_name_key(row.first_name, row.last_name)
+                if k and census_name_counts.get(k, 0) > 1:
+                    record.is_duplicate_name = True
                 _flag_discrepancies(record)
                 merged.append(record)
         else:
             # Dependent: inherits medical/dental/vision tier context from the
-            # subscriber but typically has no independent price line in the
-            # PDF (dependents ride on the subscriber's premium).
-            pdf_emps = last_subscriber_matches
+            # subscriber. Try to match by last name first (if on a different sheet)
+            dep_last = row.last_name.strip().lower() if row.last_name else ""
+            if dep_last in subscriber_by_last_name:
+                pdf_emps, base_summaries = subscriber_by_last_name[dep_last]
+            else:
+                pdf_emps = last_subscriber_matches
+                base_summaries = last_subscriber_summaries
+                
             method = "dependent_inherits_subscriber" if pdf_emps else "unmatched"
-            
-            summaries_to_use = last_subscriber_summaries or [_empty_summary()]
+            summaries_to_use = base_summaries or [_empty_summary()]
             
             for summary in summaries_to_use:
                 dep_summary = _dependent_summary(summary)
@@ -242,7 +263,34 @@ def _llm_match(census_names: list[str], pdf_names: list[str]) -> dict[str, str]:
     return {}
 
 
-from config import MEDICAL_TIER_WAIVED
+from config import MEDICAL_TIER_WAIVED, MEDICAL_TIER_MAP
+
+
+def _normalize_census_tier(tier_str: str) -> str:
+    """Normalize census tier strings like 'EE - Single' or 'ES - Employee/Spouse' 
+    to their standard code for comparison.
+    
+    Census tiers often include descriptive text after a dash, e.g.:
+      'EE - Single' -> 'EE'
+      'ES - Employee/Spouse' -> 'ES'
+      'EF - Employee/Family' -> 'ESC'  (mapped via MEDICAL_TIER_MAP)
+      'EC - Employee/Children' -> 'EC'
+    """
+    if not tier_str:
+        return ""
+    raw = tier_str.strip().upper()
+    
+    # Strip descriptive text after " - " (e.g. "EE - Single" -> "EE")
+    if " - " in raw:
+        raw = raw.split(" - ")[0].strip()
+    
+    # Also handle "WAIVE" / "Waived"
+    if raw in ("WAIVE", "WAIVED"):
+        return "WO"
+    
+    # Map through MEDICAL_TIER_MAP to get the canonical numeric form
+    mapped = MEDICAL_TIER_MAP.get(raw, raw)
+    return mapped
 
 
 def _empty_summary() -> dict:
@@ -271,8 +319,12 @@ def _flag_discrepancies(record: MergedRecord) -> None:
 
     if record.match_method == "pdf_only":
         record.discrepancy_status = "Not on census"
-        record.discrepancies.append("Not on census: found on invoice but missing from demographic census.")
+        record.discrepancies.append("not in the census listed in the invoice")
         return
+
+    if record.is_duplicate_name:
+        record.discrepancies.append("Duplicate names listed in the census")
+        record.discrepancy_status = "Duplicate names listed in the census"
 
     if record.match_method == "unmatched":
         record.discrepancy_status = "not available on invoice"
@@ -300,14 +352,17 @@ def _flag_discrepancies(record: MergedRecord) -> None:
         record.discrepancy_status = ""
         return  # tier-only comparison already handled; no price to compare
 
-    census_tier = (row.medical_coverage_tier or "").strip().upper()
-    if not census_tier:
-        census_tier = "WO"
+    # Normalize both census and PDF tiers through MEDICAL_TIER_MAP for apples-to-apples comparison
+    census_tier_raw = (row.medical_coverage_tier or "").strip().upper()
+    census_tier = _normalize_census_tier(census_tier_raw) if census_tier_raw else "WO"
+    
     pdf_tier = (summary.get("medical_coverage_tier") or "").strip().upper()
-    if not pdf_tier:
-        pdf_tier = "WO"
+    pdf_tier_normalized = MEDICAL_TIER_MAP.get(pdf_tier, pdf_tier) if pdf_tier else "WO"
         
-    tier_mismatch = (census_tier != pdf_tier)
+    if not census_tier_raw:
+        tier_mismatch = False
+    else:
+        tier_mismatch = (census_tier != pdf_tier_normalized)
 
     if name_mismatch and tier_mismatch:
         record.discrepancy_status = "mismatch employee name & mismatch coverage name"
@@ -319,24 +374,23 @@ def _flag_discrepancies(record: MergedRecord) -> None:
         record.discrepancy_status = "Correct"
 
     # Compare census pre-existing medical tier (if any) vs PDF-derived tier.
-    census_tier_orig = (row.medical_coverage_tier or "").strip().upper() or None
-    pdf_tier_orig = summary.get("medical_coverage_tier")
-    if census_tier_orig and pdf_tier_orig and census_tier_orig != pdf_tier_orig:
-        record.discrepancies.append(
-            f"Medical coverage tier mismatch: census='{census_tier_orig}' vs pdf='{pdf_tier_orig}'."
-        )
+    if census_tier_raw and census_tier_raw not in ("", "WO", "WAIVE", "WAIVED"):
+        if pdf_tier and pdf_tier not in ("", "WO") and census_tier != pdf_tier_normalized:
+            record.discrepancies.append(
+                f"Medical coverage tier mismatch: census='{census_tier_raw}' (normalized='{census_tier}') vs pdf='{pdf_tier}' (normalized='{pdf_tier_normalized}')."
+            )
 
-    if not summary.get("medical_plan_enrolled") and (row.medical_coverage_tier or "").strip().upper() not in (None, "", "WO"):
+    if not summary.get("medical_plan_enrolled") and summary.get("medical_plan_price") is None and (row.medical_coverage_tier or "").strip().upper() not in (None, "", "WO"):
         record.discrepancies.append(
             "Census indicates active medical coverage tier but no medical plan line "
             "was found on the PDF invoice for this employee."
         )
-    if not summary.get("dental_plan_enrolled") and (row.dental_coverage_tier or "").strip().upper() not in (None, "", "WO"):
+    if not summary.get("dental_plan_enrolled") and summary.get("dental_plan_price") is None and (row.dental_coverage_tier or "").strip().upper() not in (None, "", "WO"):
         record.discrepancies.append(
             "Census indicates active dental coverage tier but no dental plan line "
             "was found on the PDF invoice for this employee."
         )
-    if not summary.get("vision_plan_enrolled") and (row.vision_coverage_tier or "").strip().upper() not in (None, "", "WO"):
+    if not summary.get("vision_plan_enrolled") and summary.get("vision_plan_price") is None and (row.vision_coverage_tier or "").strip().upper() not in (None, "", "WO"):
         record.discrepancies.append(
             "Census indicates active vision coverage tier but no vision plan line "
             "was found on the PDF invoice for this employee."

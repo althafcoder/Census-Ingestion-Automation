@@ -30,7 +30,7 @@ import difflib
 import re
 from typing import Optional
 
-from config import PLAN_CATEGORY_RULES, MEDICAL_TIER_MAP, MEDICAL_TIER_WAIVED
+from config import PLAN_CATEGORY_RULES, MEDICAL_TIER_MAP, MEDICAL_TIER_WAIVED, MEDICAL_PREMIUM_INFERENCE_THRESHOLD
 
 
 def normalize_name_key(first: str, last: str) -> str:
@@ -58,20 +58,39 @@ def best_fuzzy_match(target_key: str, candidate_keys: list[str], cutoff: float =
     return matches[0] if matches else None
 
 
-def classify_plan(plan_name: str) -> str:
+def classify_plan(plan_name: str) -> list[str]:
     """
-    Map a raw PDF plan-name string to a template bucket:
+    Map a raw PDF plan-name string to template buckets:
     medical | dental | vision | life | ltd | std | voluntary_other
-
-    Rule-based baseline; see module docstring re: LLM upgrade path.
+    Returns a list of categories if the plan is a bundled plan (e.g. Medical & Dental).
     """
     name = plan_name.upper()
-    for category, keywords in PLAN_CATEGORY_RULES:
-        if not keywords:
-            continue
-        if any(kw.upper() in name for kw in keywords):
-            return category
-    return "voluntary_other"
+    categories = []
+    
+    has_medical = any(kw in name for kw in ["MEDICAL", "HMO", "PPO", "EPO", "POS", "HDHP", "HSA"])
+    has_dental = any(kw in name for kw in ["DENTAL", "DMO", "DPPO", "ORTHO", "SMILE", "TEETH", "DELTA"])
+    has_vision = any(kw in name for kw in ["VISION", "VSP", "EYE", "OPTIC"])
+
+    if has_medical:
+        categories.append("medical")
+    if has_dental:
+        categories.append("dental")
+    if has_vision:
+        categories.append("vision")
+        
+    if not categories:
+        # Check standard PLAN_CATEGORY_RULES for any remaining categories
+        for category, keywords in PLAN_CATEGORY_RULES:
+            if not keywords:
+                continue
+            if category in categories:
+                continue
+            if any(kw.upper() in name for kw in keywords):
+                categories.append(category)
+
+    if not categories:
+        categories.append("voluntary_other")
+    return categories
 
 
 def money(value) -> float:
@@ -103,9 +122,12 @@ def normalize_tier(tier: Optional[str], category: str = "") -> Optional[str]:
                 return p
         
         if parts:
-            return parts[0]
+            tier = parts[0]
             
-    return tier
+    # Now map the raw string to a suffix
+    from config import MEDICAL_TIER_MAP
+    mapped = MEDICAL_TIER_MAP.get(tier, tier)
+    return mapped
 
 
 def _empty_summary() -> dict:
@@ -135,10 +157,6 @@ def build_employee_plan_summaries(employee_benefits_list) -> list[dict]:
     """
     Collapse a list of EmployeeBenefits records' raw plan lines (from pdf_extractor)
     into field-per-category summaries matching the template's column groups.
-
-    If multiple plans of the same core category are found (e.g. two basic life plans),
-    they will spill over into a new overflow summary, which results in the employee
-    getting an additional row in the output template.
     """
     summaries = [_empty_summary()]
     seen_category_prices = [{}]
@@ -147,123 +165,235 @@ def build_employee_plan_summaries(employee_benefits_list) -> list[dict]:
     for emp in employee_benefits_list:
         all_plans.extend(emp.plans)
 
+    unclassified_plans = []
+
     for plan in all_plans:
-        category = classify_plan(plan.plan_name)
+        categories = classify_plan(plan.plan_name)
         price = money(plan.total_monthly_due)
+        
+        # If a plan covers multiple categories, it's likely a merged string (e.g. from OCR).
+        # We try to split it into its component parts based on category keywords.
+        plan_names_by_cat = {}
+        if len(categories) > 1:
+            name_upper = plan.plan_name.upper()
+            anchors = {
+                "medical": ["MEDICAL", "HMO", "PPO", "EPO", "POS", "HDHP", "HSA", "BLUE CROSS", "AETNA", "CIGNA", "UNITED HEALTH", "ANTHEM"],
+                "dental": ["DENTAL", "DMO", "DPPO", "ORTHO", "SMILE", "TEETH", "DELTA"],
+                "vision": ["VISION", "VSP", "EYE", "OPTIC"],
+                "life": ["LIFE", "AD&D", "AD & D"],
+                "ltd": ["LTD", "LONG TERM DISABILITY"],
+                "std": ["STD", "SHORT TERM DISABILITY"],
+                "voluntary_other": ["VOLUNTARY", "ACCIDENT", "CRITICAL", "HOSPITAL"]
+            }
+            cat_positions = []
+            for cat in categories:
+                pos = -1
+                if cat in anchors:
+                    for kw in anchors[cat]:
+                        idx = name_upper.find(kw)
+                        if idx != -1:
+                            if pos == -1 or idx < pos:
+                                pos = idx
+                if pos != -1:
+                    cat_positions.append((pos, cat))
+            
+            cat_positions.sort()
+            
+            if len(cat_positions) > 1:
+                for i in range(len(cat_positions)):
+                    start_idx = cat_positions[i][0]
+                    end_idx = cat_positions[i+1][0] if i + 1 < len(cat_positions) else len(plan.plan_name)
+                    if i == 0 and start_idx > 0:
+                        start_idx = 0
+                    cat = cat_positions[i][1]
+                    plan_names_by_cat[cat] = plan.plan_name[start_idx:end_idx].strip()
+        
+        # Fallback to full string for any category that couldn't be cleanly split
+        for cat in categories:
+            if cat not in plan_names_by_cat:
+                plan_names_by_cat[cat] = plan.plan_name
 
-        placed = False
-        for i, summary in enumerate(summaries):
-            if category == "medical":
-                if summary["medical_plan_enrolled"] is None:
+        # If the plan covers multiple categories, distribute the price.
+        # Simple heuristic: first category gets full price, others get 0, to avoid duplicating premiums.
+        for idx, category in enumerate(categories):
+            cat_price = price if idx == 0 else 0.0
+            cat_plan_name = plan_names_by_cat[category]
+
+            placed = False
+            for i, summary in enumerate(summaries):
+                if category == "medical":
+                    if summary["medical_plan_enrolled"] is None:
+                        raw_tier = normalize_tier(plan.coverage_tier, category)
+                        summary["medical_coverage_tier"] = MEDICAL_TIER_MAP.get(raw_tier, raw_tier)
+                        summary["medical_plan_enrolled"] = cat_plan_name
+                        summary["medical_plan_price"] = cat_price
+                        seen_category_prices[i]["medical"] = cat_price
+                        placed = True
+                        break
+                    elif cat_price <= seen_category_prices[i].get("medical", -1):
+                        summary["notes"].append(f"Duplicate medical line ignored: {cat_plan_name}")
+                        placed = True
+                        break
+                    else:
+                        summary["notes"].append(f"Replacing lower price plan {summary['medical_plan_enrolled']} with {cat_plan_name}")
+                        raw_tier = normalize_tier(plan.coverage_tier, category)
+                        summary["medical_coverage_tier"] = MEDICAL_TIER_MAP.get(raw_tier, raw_tier)
+                        summary["medical_plan_enrolled"] = cat_plan_name
+                        summary["medical_plan_price"] = cat_price
+                        seen_category_prices[i]["medical"] = cat_price
+                        placed = True
+                        break
+
+                elif category == "dental":
+                    if summary["dental_plan_enrolled"] is None:
+                        summary["dental_coverage_tier"] = normalize_tier(plan.coverage_tier, category)
+                        summary["dental_plan_enrolled"] = cat_plan_name
+                        summary["dental_plan_price"] = cat_price
+                        seen_category_prices[i]["dental"] = cat_price
+                        placed = True
+                        break
+                    elif cat_price <= seen_category_prices[i].get("dental", -1):
+                        summary["notes"].append(f"Duplicate dental line ignored: {cat_plan_name}")
+                        placed = True
+                        break
+                    else:
+                        summary["notes"].append(f"Replacing lower price plan {summary['dental_plan_enrolled']} with {cat_plan_name}")
+                        summary["dental_coverage_tier"] = normalize_tier(plan.coverage_tier, category)
+                        summary["dental_plan_enrolled"] = cat_plan_name
+                        summary["dental_plan_price"] = cat_price
+                        seen_category_prices[i]["dental"] = cat_price
+                        placed = True
+                        break
+
+                elif category == "vision":
+                    if summary["vision_plan_enrolled"] is None:
+                        summary["vision_coverage_tier"] = normalize_tier(plan.coverage_tier, category)
+                        summary["vision_plan_enrolled"] = cat_plan_name
+                        summary["vision_plan_price"] = cat_price
+                        seen_category_prices[i]["vision"] = cat_price
+                        placed = True
+                        break
+                    elif cat_price <= seen_category_prices[i].get("vision", -1):
+                        summary["notes"].append(f"Duplicate vision line ignored: {cat_plan_name}")
+                        placed = True
+                        break
+
+                elif category == "life":
+                    is_base_life = "VOLUNTARY" not in cat_plan_name.upper() and "WHOLE LIFE" not in cat_plan_name.upper()
+                
+                    if summary["life_plan_name"] is None:
+                        summary["life_plan_name"] = cat_plan_name
+                        summary["life_benefit"] = normalize_tier(plan.coverage_tier, category)
+                        summary["life_rate"] = cat_price
+                        placed = True
+                        break
+                    else:
+                        existing_is_base = "VOLUNTARY" not in summary["life_plan_name"].upper() and "WHOLE LIFE" not in summary["life_plan_name"].upper()
+                        if is_base_life and not existing_is_base:
+                            summary["notes"].append(f"Replaced voluntary life with base life: {cat_plan_name}")
+                            summary["life_plan_name"] = cat_plan_name
+                            summary["life_benefit"] = normalize_tier(plan.coverage_tier, category)
+                            summary["life_rate"] = cat_price
+                            placed = True
+                            break
+                        elif not is_base_life:
+                            summary["notes"].append(f"Additional life line noted only: {cat_plan_name}")
+                            placed = True
+                            break
+
+                elif category == "ltd":
+                    if summary["ltd_plan"] is None:
+                        summary["ltd_plan"] = cat_plan_name
+                        summary["ltd_benefit"] = normalize_tier(plan.coverage_tier, category)
+                        summary["ltd_rate"] = cat_price
+                        placed = True
+                        break
+
+                elif category == "std":
+                    if summary["std_plan"] is None:
+                        summary["std_plan"] = cat_plan_name
+                        summary["std_benefit"] = normalize_tier(plan.coverage_tier, category)
+                        summary["std_rate"] = cat_price
+                        placed = True
+                        break
+
+                else:
+                    # Track unclassified plans for potential medical inference
+                    unclassified_plans.append(plan)
+                    summary["notes"].append(f"Voluntary/other line not mapped to template column: {plan.plan_name} (${price})")
+                    placed = True
+                    break
+
+            if not placed:
+                # Create a new overflow summary for this extra plan
+                new_summary = _empty_summary()
+                seen_category_prices.append({})
+            
+                if category == "medical":
                     raw_tier = normalize_tier(plan.coverage_tier, category)
-                    summary["medical_coverage_tier"] = MEDICAL_TIER_MAP.get(raw_tier, raw_tier)
-                    summary["medical_plan_enrolled"] = plan.plan_name
-                    summary["medical_plan_price"] = price
-                    seen_category_prices[i]["medical"] = price
-                    placed = True
-                    break
-                elif price <= seen_category_prices[i].get("medical", -1):
-                    summary["notes"].append(f"Duplicate medical line ignored: {plan.plan_name}")
-                    placed = True
-                    break
-
-            elif category == "dental":
-                if summary["dental_plan_enrolled"] is None:
-                    summary["dental_coverage_tier"] = normalize_tier(plan.coverage_tier, category)
-                    summary["dental_plan_enrolled"] = plan.plan_name
-                    summary["dental_plan_price"] = price
-                    seen_category_prices[i]["dental"] = price
-                    placed = True
-                    break
-                elif price <= seen_category_prices[i].get("dental", -1):
-                    summary["notes"].append(f"Duplicate dental line ignored: {plan.plan_name}")
-                    placed = True
-                    break
-
-            elif category == "vision":
-                if summary["vision_plan_enrolled"] is None:
-                    summary["vision_coverage_tier"] = normalize_tier(plan.coverage_tier, category)
-                    summary["vision_plan_enrolled"] = plan.plan_name
-                    summary["vision_plan_price"] = price
-                    seen_category_prices[i]["vision"] = price
-                    placed = True
-                    break
-                elif price <= seen_category_prices[i].get("vision", -1):
-                    summary["notes"].append(f"Duplicate vision line ignored: {plan.plan_name}")
-                    placed = True
-                    break
-
-            elif category == "life":
-                # Prefer the base "METL LIFE INS $x,xxx" line over voluntary/whole-life riders.
-                is_base_life = "VOLUNTARY" not in plan.plan_name.upper() and "WHOLE LIFE" not in plan.plan_name.upper()
-                if not is_base_life:
-                    summary["notes"].append(f"Additional life line noted only: {plan.plan_name}")
-                    placed = True
-                    break
-                    
-                if summary["life_plan_name"] is None:
-                    summary["life_plan_name"] = plan.plan_name
-                    summary["life_benefit"] = normalize_tier(plan.coverage_tier, category)
-                    summary["life_rate"] = price
-                    placed = True
-                    break
-
-            elif category == "ltd":
-                if summary["ltd_plan"] is None:
-                    summary["ltd_plan"] = plan.plan_name
-                    summary["ltd_benefit"] = normalize_tier(plan.coverage_tier, category)
-                    summary["ltd_rate"] = price
-                    placed = True
-                    break
-
-            elif category == "std":
-                if summary["std_plan"] is None:
-                    summary["std_plan"] = plan.plan_name
-                    summary["std_benefit"] = normalize_tier(plan.coverage_tier, category)
-                    summary["std_rate"] = price
-                    placed = True
-                    break
-
-            else:
-                summary["notes"].append(f"Voluntary/other line not mapped to template column: {plan.plan_name} (${price})")
-                placed = True
-                break
-
-        if not placed:
-            # Create a new overflow summary for this extra plan
-            new_summary = _empty_summary()
-            seen_category_prices.append({})
+                    new_summary["medical_coverage_tier"] = MEDICAL_TIER_MAP.get(raw_tier, raw_tier)
+                    new_summary["medical_plan_enrolled"] = plan.plan_name
+                    new_summary["medical_plan_price"] = cat_price
+                    seen_category_prices[-1]["medical"] = cat_price
+                elif category == "dental":
+                    new_summary["dental_coverage_tier"] = normalize_tier(plan.coverage_tier, category)
+                    new_summary["dental_plan_enrolled"] = plan.plan_name
+                    new_summary["dental_plan_price"] = cat_price
+                    seen_category_prices[-1]["dental"] = cat_price
+                elif category == "vision":
+                    new_summary["vision_coverage_tier"] = normalize_tier(plan.coverage_tier, category)
+                    new_summary["vision_plan_enrolled"] = plan.plan_name
+                    new_summary["vision_plan_price"] = cat_price
+                    seen_category_prices[-1]["vision"] = cat_price
+                elif category == "life":
+                    new_summary["life_plan_name"] = plan.plan_name
+                    new_summary["life_benefit"] = normalize_tier(plan.coverage_tier, category)
+                    new_summary["life_rate"] = cat_price
+                elif category == "ltd":
+                    new_summary["ltd_plan"] = plan.plan_name
+                    new_summary["ltd_benefit"] = normalize_tier(plan.coverage_tier, category)
+                    new_summary["ltd_rate"] = cat_price
+                elif category == "std":
+                    new_summary["std_plan"] = plan.plan_name
+                    new_summary["std_benefit"] = normalize_tier(plan.coverage_tier, category)
+                    new_summary["std_rate"] = cat_price
             
-            if category == "medical":
-                raw_tier = normalize_tier(plan.coverage_tier, category)
-                new_summary["medical_coverage_tier"] = MEDICAL_TIER_MAP.get(raw_tier, raw_tier)
-                new_summary["medical_plan_enrolled"] = plan.plan_name
-                new_summary["medical_plan_price"] = price
-                seen_category_prices[-1]["medical"] = price
-            elif category == "dental":
-                new_summary["dental_coverage_tier"] = normalize_tier(plan.coverage_tier, category)
-                new_summary["dental_plan_enrolled"] = plan.plan_name
-                new_summary["dental_plan_price"] = price
-                seen_category_prices[-1]["dental"] = price
-            elif category == "vision":
-                new_summary["vision_coverage_tier"] = normalize_tier(plan.coverage_tier, category)
-                new_summary["vision_plan_enrolled"] = plan.plan_name
-                new_summary["vision_plan_price"] = price
-                seen_category_prices[-1]["vision"] = price
-            elif category == "life":
-                new_summary["life_plan_name"] = plan.plan_name
-                new_summary["life_benefit"] = normalize_tier(plan.coverage_tier, category)
-                new_summary["life_rate"] = price
-            elif category == "ltd":
-                new_summary["ltd_plan"] = plan.plan_name
-                new_summary["ltd_benefit"] = normalize_tier(plan.coverage_tier, category)
-                new_summary["ltd_rate"] = price
-            elif category == "std":
-                new_summary["std_plan"] = plan.plan_name
-                new_summary["std_benefit"] = normalize_tier(plan.coverage_tier, category)
-                new_summary["std_rate"] = price
-            
-            summaries.append(new_summary)
+                summaries.append(new_summary)
+
+    # -----------------------------------------------------------------------
+    # Dynamic premium-based Medical inference fallback
+    # -----------------------------------------------------------------------
+    # If no medical plan was placed via keywords, check if any unclassified
+    # plan has a premium >= MEDICAL_PREMIUM_INFERENCE_THRESHOLD ($200).
+    # Dental/Vision/Life premiums are nearly always well under $200,
+    # so a high-premium unclassified plan is almost certainly Medical.
+    for summary in summaries:
+        if summary["medical_plan_enrolled"] is not None:
+            continue  # Already has a medical plan
+        
+        # Find the best unclassified candidate (highest premium >= threshold)
+        best_candidate = None
+        best_price = 0.0
+        for plan in unclassified_plans:
+            price = money(plan.total_monthly_due)
+            if price >= MEDICAL_PREMIUM_INFERENCE_THRESHOLD and price > best_price:
+                best_candidate = plan
+                best_price = price
+        
+        if best_candidate:
+            raw_tier = normalize_tier(best_candidate.coverage_tier, "medical")
+            summary["medical_coverage_tier"] = MEDICAL_TIER_MAP.get(raw_tier, raw_tier)
+            summary["medical_plan_enrolled"] = best_candidate.plan_name
+            summary["medical_plan_price"] = money(best_candidate.total_monthly_due)
+            # Remove the note about it being unclassified
+            note_to_remove = f"Voluntary/other line not mapped to template column: {best_candidate.plan_name} (${money(best_candidate.total_monthly_due)})"
+            if note_to_remove in summary["notes"]:
+                summary["notes"].remove(note_to_remove)
+            summary["notes"].append(
+                f"Medical plan inferred via premium threshold (${money(best_candidate.total_monthly_due)} >= "
+                f"${MEDICAL_PREMIUM_INFERENCE_THRESHOLD}): {best_candidate.plan_name}"
+            )
+            unclassified_plans.remove(best_candidate)
 
     return summaries
 

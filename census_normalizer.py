@@ -31,6 +31,7 @@ from typing import Optional
 from config import (
     PRODUCT_TYPE_CLASSIFICATION,
     MEDICAL_TIER_MAP,
+    DEPENDENT_RELATIONSHIP_MAP,
 )
 
 # Avoid circular import: CensusRow is imported lazily or from census_extractor.
@@ -197,12 +198,16 @@ Output ONLY valid JSON."""
 # Person key for grouping rows
 # ---------------------------------------------------------------------------
 
-def _person_key(first_name: str | None, last_name: str | None,
+def _person_key(employee_id: str | None, first_name: str | None, last_name: str | None,
                 dob: object = None) -> str:
     """
-    Build a grouping key for a person. Uses first+last+DOB to handle
-    cases where multiple family members share a last name.
+    Build a grouping key for a person. Uses employee_id if available,
+    otherwise first+last+DOB to handle cases where multiple family members
+    share a last name.
     """
+    if employee_id and str(employee_id).strip():
+        return f"id:{str(employee_id).strip()}"
+        
     fn = (first_name or "").strip().lower()
     ln = (last_name or "").strip().lower()
     dob_str = ""
@@ -334,7 +339,8 @@ def normalize_pivoted_census(
     person_order: list[str] = []
 
     for row in raw_rows:
-        key = _person_key(row["first_name"], row["last_name"], row["dob"])
+        emp_id = row.get("family_id") or row.get("dependent_of_employee_number")
+        key = _person_key(emp_id, row["first_name"], row["last_name"], row["dob"])
         if key not in person_groups:
             person_order.append(key)
         person_groups[key].append(row)
@@ -394,21 +400,28 @@ def normalize_pivoted_census(
 
             if category == "medical":
                 if plan_data["medical_plan_enrolled"] is None:
-                    # Map tier through MEDICAL_TIER_MAP
                     raw_tier = (tier or "").strip().upper()
-                    plan_data["medical_coverage_tier"] = MEDICAL_TIER_MAP.get(raw_tier, raw_tier) or None
+                    mapped = MEDICAL_TIER_MAP.get(raw_tier, raw_tier) or None
+                    if mapped in ('1', '2', '3', '4'): mapped = f"M{mapped}"
+                    plan_data["medical_coverage_tier"] = mapped
                     plan_data["medical_plan_enrolled"] = full_plan_name
                     plan_data["medical_plan_price"] = premium
 
             elif category == "dental":
                 if plan_data["dental_plan_enrolled"] is None:
-                    plan_data["dental_coverage_tier"] = (tier or "").strip().upper() or None
+                    raw_tier = (tier or "").strip().upper()
+                    mapped = MEDICAL_TIER_MAP.get(raw_tier, raw_tier) or None
+                    if mapped in ('1', '2', '3', '4'): mapped = f"D{mapped}"
+                    plan_data["dental_coverage_tier"] = mapped
                     plan_data["dental_plan_enrolled"] = full_plan_name
                     plan_data["dental_plan_price"] = premium
 
             elif category == "vision":
                 if plan_data["vision_plan_enrolled"] is None:
-                    plan_data["vision_coverage_tier"] = (tier or "").strip().upper() or None
+                    raw_tier = (tier or "").strip().upper()
+                    mapped = MEDICAL_TIER_MAP.get(raw_tier, raw_tier) or None
+                    if mapped in ('1', '2', '3', '4'): mapped = f"V{mapped}"
+                    plan_data["vision_coverage_tier"] = mapped
                     plan_data["vision_plan_enrolled"] = full_plan_name
                     plan_data["vision_plan_price"] = premium
 
@@ -433,11 +446,15 @@ def normalize_pivoted_census(
             # "ignore" and "unknown" are silently skipped
 
         # Determine relationship
-        rel_raw = (demo.get("relationship") or "").strip().lower()
-        is_self = rel_raw in _self_values or rel_raw == ""
+        rel_raw = (demo.get("relationship") or "").strip()
+        is_self = rel_raw.lower() in _self_values or rel_raw == ""
 
         # Map relationship value to the format expected by the template
-        relationship = "EE" if is_self else (demo.get("relationship") or "").strip()
+        if is_self:
+            relationship = "EE"
+        else:
+            rel_upper = rel_raw.upper()
+            relationship = DEPENDENT_RELATIONSHIP_MAP.get(rel_upper, rel_raw)
 
         census_row = CensusRow(
             row_no=demo.get("family_id"),
