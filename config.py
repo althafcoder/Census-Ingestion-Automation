@@ -374,13 +374,14 @@ EMPLOYMENT_STATUS_MAP = {
 # Dynamic Loading of Census Header Aliases from Excel Mapping
 # ---------------------------------------------------------------------------
 def _load_dynamic_header_aliases():
-    mapping_file = Path(__file__).resolve().parent / "Field Mapping Census - Prestige.xlsx"
-    if not mapping_file.exists():
+    mappings_dir = PROCESSING_DIR / "mappings"
+    if not mappings_dir.exists():
         return
 
     # Map Validation Template exact strings to the internal field keys
     val_to_key = {
         'First Name (EEscriber / Dependent)': 'first_name',
+        'Employee First Name (EEscriber / Dependent)': 'first_name',
         'Employee Last Name (EEscriber / Dependent)': 'last_name',
         'Gender': 'gender',
         'Date of Birth': 'dob',
@@ -413,40 +414,47 @@ def _load_dynamic_header_aliases():
         'FT/PT': 'ft_pt'
     }
 
-    try:
-        df = pd.read_excel(mapping_file)
+    import re
+    def normalize_val(v):
+        return re.sub(r'[^a-zA-Z0-9]', '', str(v)).lower()
         
-        # We look for all columns that might contain excel mappings
-        # (e.g. 'EXCEL', 'excel ')
-        mapping_cols = [c for c in df.columns if str(c).strip().lower() == 'excel']
-        
-        for _, row in df.iterrows():
-            val_template = str(row.get('Validation Template (Personl Info)', '')).strip()
-            if val_template in val_to_key:
-                key = val_to_key[val_template]
-                
-                # Extract all possible mappings from the mapping columns
-                new_aliases = []
-                for col in mapping_cols:
-                    val = str(row.get(col, '')).strip()
-                    if val and val.lower() != 'nan':
-                        # Split by '/' to get individual aliases
-                        for alias in val.split('/'):
-                            alias = alias.strip().lower()
-                            if alias and alias not in new_aliases:
-                                new_aliases.append(alias)
-                
-                if key in CENSUS_HEADER_ALIASES:
-                    # Prepend new aliases so they take precedence in exact match
-                    for a in reversed(new_aliases):
-                        if a in CENSUS_HEADER_ALIASES[key]:
-                            CENSUS_HEADER_ALIASES[key].remove(a)
-                        CENSUS_HEADER_ALIASES[key].insert(0, a)
-                else:
-                    CENSUS_HEADER_ALIASES[key] = new_aliases
+    val_to_key_norm = {normalize_val(k): v for k, v in val_to_key.items()}
+
+    for mapping_file in mappings_dir.glob("*.xlsx"):
+        try:
+            df = pd.read_excel(mapping_file)
+            
+            # We look for all columns that might contain excel mappings
+            # (e.g. 'EXCEL', 'excel ', 'ADP', 'adp ')
+            mapping_cols = [c for c in df.columns if str(c).strip().lower() in ('excel', 'adp')]
+            
+            for _, row in df.iterrows():
+                val_template = normalize_val(row.get('Validation Template (Personl Info)', ''))
+                if val_template in val_to_key_norm:
+                    key = val_to_key_norm[val_template]
                     
-    except Exception as e:
-        warnings.warn(f"Failed to load dynamic header aliases from {mapping_file}: {e}")
+                    # Extract all possible mappings from the mapping columns
+                    new_aliases = []
+                    for col in mapping_cols:
+                        val = str(row.get(col, '')).strip()
+                        if val and val.lower() != 'nan':
+                            # Split by '/' to get individual aliases
+                            for alias in val.split('/'):
+                                alias = alias.strip().lower()
+                                if alias and alias not in new_aliases:
+                                    new_aliases.append(alias)
+                    
+                    if key in CENSUS_HEADER_ALIASES:
+                        # Prepend new aliases so they take precedence in exact match
+                        for a in reversed(new_aliases):
+                            if a in CENSUS_HEADER_ALIASES[key]:
+                                CENSUS_HEADER_ALIASES[key].remove(a)
+                            CENSUS_HEADER_ALIASES[key].insert(0, a)
+                    else:
+                        CENSUS_HEADER_ALIASES[key] = new_aliases
+                        
+        except Exception as e:
+            warnings.warn(f"Failed to load dynamic header aliases from {mapping_file}: {e}")
 
 _load_dynamic_header_aliases()
 

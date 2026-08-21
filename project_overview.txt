@@ -1,0 +1,37 @@
+Project Name: Census-Ingestion-Automation
+
+Project Goal:
+The project is a Census / Benefits-Invoice Reconciler. It automates the process of extracting, matching, and reconciling employee benefits data from two distinct sources, and then formatting the combined result into a specific template.
+
+Technologies Used:
+- Language: Python 3.10+
+- Excel Parsing/Writing: openpyxl (used instead of pandas for direct row-precise reading/writing of Excel files, which is necessary due to multi-row headers).
+- PDF Parsing: pdfplumber (used for deterministic plain-text extraction).
+- Data Manipulation: pandas (available for ad-hoc data quality checks and CSV work).
+- Standard Libraries: difflib (for fuzzy string matching), regex (for text pattern matching).
+
+Extraction Methods:
+1. PDF Invoice Extraction:
+   - Method: Text Extraction and Regex Matching.
+   - Tool: pdfplumber.
+   - Details: It reads the text from the Paychex PEO benefits PDF line-by-line. It uses specific Regular Expressions (regex) to identify employee headers (e.g., "Abraham, Luis - 728") and benefit lines (e.g., plan name, coverage tier, premium). 
+2. Excel Census Extraction:
+   - Method: Row-by-Row Cell Parsing.
+   - Tool: openpyxl.
+   - Details: Opens the raw Excel workbook and iterates through the rows starting from a known row index (skipping the complex headers). It extracts demographic data (name, DOB, ZIP, relationship) column by column into a structured data format.
+
+Comparison & Reconciliation Strategy (Census vs PDF):
+- Matching Key: The primary link between the Census (Excel) and the Invoice (PDF) is the Employee Name.
+- Exact Matching: It first attempts to find a 100% exact match between the subscriber name on the PDF and the employee name in the Census.
+- Fuzzy Matching: If an exact match fails (due to middle initials, suffixes like "Jr.", or spelling variations), it falls back to fuzzy matching using Python's difflib library (with a cutoff threshold, e.g., 82% similarity).
+- Dependent Handling: Dependents in the Census inherit the PDF match of their subscriber (the invoice only lists subscribers).
+- Discrepancy Flagging: 
+  - If a census employee has no match in the PDF invoice.
+  - If a match was made fuzzily (flagged for manual review).
+  - If the medical coverage tier in the Census disagrees with the tier found in the PDF.
+  - If the Census indicates active coverage but no medical line was found on the invoice.
+- LLM Extensibility: The code includes placeholder functions where an LLM can be plugged in to resolve the most ambiguous name matches and classify unknown plan names.
+
+Output Generation:
+- Fills the matched and combined data into a specific target layout (Prestige census template).
+- Produces a detailed reconciliation report (in both JSON and CSV formats) that lists all flagged discrepancies for human review.

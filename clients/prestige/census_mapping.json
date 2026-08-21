@@ -1,0 +1,300 @@
+{
+  "header_aliases": {
+    "row_no": [
+      "row",
+      "row no",
+      "#",
+      "no",
+      "number",
+      "emp #",
+      "employee #",
+      "employee number"
+    ],
+    "first_name": [
+      "first name",
+      "first",
+      "fname",
+      "given name"
+    ],
+    "last_name": [
+      "last name",
+      "last",
+      "lname",
+      "surname",
+      "family name",
+      "employee last name"
+    ],
+    "gender": [
+      "gender",
+      "sex"
+    ],
+    "dob": [
+      "date of birth",
+      "dob",
+      "birth date",
+      "birthdate",
+      "birth"
+    ],
+    "home_zip": [
+      "home zip",
+      "zip code",
+      "zip",
+      "postal code",
+      "home zip code"
+    ],
+    "relationship": [
+      "relationship",
+      "relation",
+      "relationship to employee",
+      "type",
+      "ee/dep",
+      "enrollee type",
+      "enrolleetype",
+      "member type",
+      "subscriber type"
+    ],
+    "dependent_of_employee_number": [
+      "dependent of",
+      "dependent of employee number",
+      "dependent of employee",
+      "subscriber",
+      "subscriber #"
+    ],
+    "medical_coverage_tier": [
+      "medical coverage tier",
+      "medical tier",
+      "medical dep status",
+      "med tier",
+      "medical"
+    ],
+    "cobra": [
+      "cobra",
+      "cobra status"
+    ],
+    "medical_plan_enrolled": [
+      "medical plan enrolled",
+      "medical plan",
+      "med plan"
+    ],
+    "medical_plan_price": [
+      "medical plan price",
+      "medical price",
+      "medical premium",
+      "med price"
+    ],
+    "dental_coverage_tier": [
+      "dental coverage tier",
+      "dental tier",
+      "dental dep status",
+      "dental"
+    ],
+    "dental_plan_enrolled": [
+      "dental plan enrolled",
+      "dental plan"
+    ],
+    "dental_plan_price": [
+      "dental plan price",
+      "dental price",
+      "dental premium"
+    ],
+    "vision_coverage_tier": [
+      "vision coverage tier",
+      "vision tier",
+      "vision dep status",
+      "vision"
+    ],
+    "vision_plan_enrolled": [
+      "vision plan enrolled",
+      "vision plan"
+    ],
+    "vision_plan_price": [
+      "vision plan price",
+      "vision price",
+      "vision premium"
+    ],
+    "life_plan_name": [
+      "life plan",
+      "life",
+      "life plan name",
+      "basic life",
+      "life insurance"
+    ],
+    "life_benefit": [
+      "life benefit",
+      "life amount",
+      "life vol",
+      "life volume",
+      "lifevolume"
+    ],
+    "life_rate": [
+      "life rate",
+      "life premium",
+      "life cost"
+    ],
+    "ltd_plan": [
+      "ltd plan",
+      "ltd",
+      "long term disability"
+    ],
+    "ltd_benefit": [
+      "ltd benefit",
+      "ltd amount"
+    ],
+    "ltd_rate": [
+      "ltd rate",
+      "ltd premium",
+      "ltd cost"
+    ],
+    "std_plan": [
+      "std plan",
+      "std",
+      "short term disability"
+    ],
+    "std_benefit": [
+      "std benefit",
+      "std amount"
+    ],
+    "std_rate": [
+      "std rate",
+      "std premium",
+      "std cost"
+    ],
+    "work_state": [
+      "work state",
+      "state",
+      "work location"
+    ],
+    "job_title": [
+      "job title",
+      "title",
+      "position",
+      "job title or for disability only"
+    ],
+    "workers_comp_code": [
+      "workers comp",
+      "workers comp code",
+      "wc code",
+      "comp code"
+    ],
+    "annual_salary": [
+      "annual salary",
+      "salary",
+      "annual",
+      "annual compensation"
+    ],
+    "ft_pt": [
+      "ft/pt",
+      "full time",
+      "part time",
+      "employment status",
+      "employment type"
+    ],
+    "elections": [
+      "elections",
+      "election"
+    ],
+    "product_type": [
+      "product type",
+      "plan type",
+      "benefit type",
+      "coverage type",
+      "line of coverage",
+      "benefit category"
+    ],
+    "plan_name_generic": [
+      "plan name",
+      "benefit name",
+      "benefit plan",
+      "coverage name"
+    ],
+    "carrier": [
+      "carrier",
+      "carrier name",
+      "insurance company",
+      "insurer",
+      "insurance carrier",
+      "vendor"
+    ],
+    "tier_generic": [
+      "tier",
+      "coverage tier",
+      "coverage level",
+      "enrollment tier"
+    ],
+    "volume": [
+      "volume",
+      "benefit amount",
+      "coverage amount",
+      "face amount"
+    ],
+    "coverage_start_date": [
+      "coverage start date",
+      "effective date",
+      "start date",
+      "enrollment date",
+      "coverage effective date"
+    ],
+    "coverage_stop_date": [
+      "coverage stop date",
+      "termination date",
+      "end date",
+      "coverage end date"
+    ],
+    "premium": [
+      "premium",
+      "monthly premium",
+      "employee premium",
+      "total premium"
+    ],
+    "hire_date": [
+      "hire date",
+      "date of hire",
+      "original hire date"
+    ],
+    "family_id": [
+      "family id",
+      "family",
+      "subscriber id",
+      "member id",
+      "group id"
+    ]
+  },
+  "template_columns": {
+    "row_no": "A",
+    "first_name": "B",
+    "last_name": "C",
+    "gender": "D",
+    "dob": "E",
+    "home_zip": "F",
+    "relationship": "G",
+    "dependent_of_employee_number": "H",
+    "medical_coverage_tier": "I",
+    "cobra": "J",
+    "medical_plan_enrolled": "K",
+    "medical_plan_price": "L",
+    "dental_coverage_tier": "M",
+    "dental_plan_enrolled": "N",
+    "dental_plan_price": "O",
+    "vision_coverage_tier": "P",
+    "vision_plan_enrolled": "Q",
+    "vision_plan_price": "R",
+    "life_plan_name": "S",
+    "life_benefit": "T",
+    "life_rate": "U",
+    "ltd_plan": "V",
+    "ltd_benefit": "W",
+    "ltd_rate": "X",
+    "std_plan": "Y",
+    "std_benefit": "Z",
+    "std_rate": "AA",
+    "work_state": "AB",
+    "job_title": "AC",
+    "workers_comp_code": "AD",
+    "annual_salary": "AE",
+    "ft_pt": "AF",
+    "discrepancies": "AG"
+  },
+  "sheet_name": "Census",
+  "header_row": 24,
+  "first_data_row": 26
+}

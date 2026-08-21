@@ -170,7 +170,7 @@ function IngestionPage() {
                 ? crypto.randomUUID() 
                 : Math.random().toString(36).substring(2, 15),
           censusName: census.name,
-          invoiceName: invoice.name,
+          invoiceName: invoices[0].name,
           timestamp: new Date().toLocaleString(),
           downloadUrl: apiResult!.downloadUrl,
         },

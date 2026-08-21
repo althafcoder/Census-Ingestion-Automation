@@ -1,0 +1,13 @@
+{
+  "golden_regression": "PASS",
+  "quality_metrics": "PASS",
+  "security": "PASS",
+  "llm_validation": "PASS",
+  "human_review": "NOT RUN",
+  "uat": "NOT RUN",
+  "shadow_mode": "NOT RUN",
+  "critical_open_defects": 0,
+  "high_open_defects": 0,
+  "rollback_ready": true,
+  "migration_approved": false
+}

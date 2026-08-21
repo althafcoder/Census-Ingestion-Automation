@@ -12,12 +12,9 @@ from __future__ import annotations
 
 import difflib
 import re
+from dataclasses import dataclass
 from datetime import datetime, date
 from pathlib import Path
-from typing import Any, Optional
-
-import openpyxl
-from pydantic import BaseModel, ConfigDict
 
 import openpyxl
 
@@ -30,41 +27,41 @@ from config import (
 )
 
 
-class CensusRow(BaseModel):
-    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True, coerce_numbers_to_str=True)
-    
-    row_no: Optional[Any] = None
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    gender: Optional[str] = None
-    dob: Optional[Any] = None
-    home_zip: Optional[str] = None
-    relationship: Optional[str] = None
-    dependent_of_employee_number: Optional[Any] = None
-    medical_coverage_tier: Optional[str] = None
-    cobra: Optional[str] = None
-    medical_plan_enrolled: Optional[str] = None
-    medical_plan_price: Optional[Any] = None
-    dental_coverage_tier: Optional[str] = None
-    dental_plan_enrolled: Optional[str] = None
-    dental_plan_price: Optional[Any] = None
-    vision_coverage_tier: Optional[str] = None
-    vision_plan_enrolled: Optional[str] = None
-    vision_plan_price: Optional[Any] = None
-    life_plan_name: Optional[str] = None
-    life_benefit: Optional[Any] = None
-    life_rate: Optional[Any] = None
-    ltd_plan: Optional[str] = None
-    ltd_benefit: Optional[Any] = None
-    ltd_rate: Optional[Any] = None
-    std_plan: Optional[str] = None
-    std_benefit: Optional[Any] = None
-    std_rate: Optional[Any] = None
-    work_state: Optional[str] = None
-    job_title: Optional[str] = None
-    workers_comp_code: Optional[Any] = None
-    annual_salary: Optional[Any] = None
-    ft_pt: Optional[str] = None
+@dataclass
+class CensusRow:
+    row_no: object
+    first_name: str
+    last_name: str
+    gender: str | None
+    dob: object
+    home_zip: str | None
+    relationship: str | None
+    dependent_of_employee_number: object
+    medical_coverage_tier: str | None
+    cobra: str | None
+    medical_plan_enrolled: str | None = None
+    medical_plan_price: object = None
+    dental_coverage_tier: str | None = None
+    dental_plan_enrolled: str | None = None
+    dental_plan_price: object = None
+    vision_coverage_tier: str | None = None
+    vision_plan_enrolled: str | None = None
+    vision_plan_price: object = None
+    life_plan_name: str | None = None
+    life_benefit: object = None
+    life_rate: object = None
+    ltd_plan: str | None = None
+    ltd_benefit: object = None
+    ltd_rate: object = None
+    std_plan: str | None = None
+    std_benefit: object = None
+    std_rate: object = None
+    work_state: str | None = None
+    job_title: str | None = None
+    workers_comp_code: object = None
+    annual_salary: object = None
+    ft_pt: str | None = None
+    subscriber_id: str | None = None
 
     @property
     def full_name_key(self) -> str:
@@ -314,69 +311,69 @@ def extract_census(xlsx_path: Path) -> list[CensusRow]:
                 elif p.startswith('V'):
                     vis_tier = p
 
-        row_dict = {
-            "row_no": get("row_no"),
-            "first_name": _clean(first_name),
-            "last_name": _clean(last_name),
-            "gender": get("gender"),
-            "dob": get("dob"),
-            "home_zip": get("home_zip"),
-            "relationship": get("relationship"),
-            "dependent_of_employee_number": get("dependent_of_employee_number"),
-            "medical_coverage_tier": med_tier,
-            "medical_plan_enrolled": get("medical_plan_enrolled"),
-            "medical_plan_price": get("medical_plan_price"),
-            "cobra": get("cobra"),
-            "dental_coverage_tier": den_tier,
-            "dental_plan_enrolled": get("dental_plan_enrolled"),
-            "dental_plan_price": get("dental_plan_price"),
-            "vision_coverage_tier": get("vision_coverage_tier"),
-            "vision_plan_enrolled": get("vision_plan_enrolled"),
-            "vision_plan_price": get("vision_plan_price"),
-            "life_plan_name": get("life_plan_name"),
-            "life_benefit": get("life_benefit"),
-            "life_rate": get("life_rate"),
-            "ltd_plan": get("ltd_plan"),
-            "ltd_benefit": get("ltd_benefit"),
-            "ltd_rate": get("ltd_rate"),
-            "std_plan": get("std_plan"),
-            "std_benefit": get("std_benefit"),
-            "std_rate": get("std_rate"),
-            "work_state": get("work_state"),
-            "job_title": get("job_title"),
-            "workers_comp_code": get("workers_comp_code"),
-            "annual_salary": get("annual_salary"),
-            "ft_pt": get("ft_pt"),
-        }
-        
-        try:
-            rows.append(CensusRow(**row_dict))
-        except Exception as e:
-            print(f"      -> Warning: Skipping row {r} due to validation error: {e}")
-            
+        rows.append(
+            CensusRow(
+                row_no=get("row_no"),
+                first_name=_clean(first_name),
+                last_name=_clean(last_name),
+                gender=get("gender"),
+                dob=get("dob"),
+                home_zip=get("home_zip"),
+                relationship=get("relationship"),
+                dependent_of_employee_number=get("dependent_of_employee_number"),
+                medical_coverage_tier=med_tier,
+                medical_plan_enrolled=get("medical_plan_enrolled"),
+                medical_plan_price=get("medical_plan_price"),
+                cobra=get("cobra"),
+                dental_coverage_tier=den_tier,
+                dental_plan_enrolled=get("dental_plan_enrolled"),
+                dental_plan_price=get("dental_plan_price"),
+                vision_coverage_tier=get("vision_coverage_tier"),
+                vision_plan_enrolled=get("vision_plan_enrolled"),
+                vision_plan_price=get("vision_plan_price"),
+                life_plan_name=get("life_plan_name"),
+                life_benefit=get("life_benefit"),
+                life_rate=get("life_rate"),
+                ltd_plan=get("ltd_plan"),
+                ltd_benefit=get("ltd_benefit"),
+                ltd_rate=get("ltd_rate"),
+                std_plan=get("std_plan"),
+                std_benefit=get("std_benefit"),
+                std_rate=get("std_rate"),
+                work_state=get("work_state"),
+                job_title=get("job_title"),
+                workers_comp_code=get("workers_comp_code"),
+                annual_salary=get("annual_salary"),
+                ft_pt=get("ft_pt"),
+            )
+        )
         r += 1
 
     # -----------------------------------------------------------------------
-    # Infer dependent_of_employee_number when the column was not in the census
+    # Infer dependent_of_employee_number and assign subscriber_id sequentially
     # -----------------------------------------------------------------------
-    # Guard: only runs when the census has no "Dependent Of" column AND
-    # relationship data is present. Censuses with the column are unaffected.
     has_dep_of_col = "dependent_of_employee_number" in field_cols
     has_any_relationship = any(row.relationship for row in rows)
     
-    if not has_dep_of_col and has_any_relationship:
-        last_ee_row_index = None  # 1-based row_no of the last employee
-        for idx, row in enumerate(rows):
-            rel_upper = (row.relationship or "").strip().upper()
-            if rel_upper in ("EE", "EMPLOYEE", "") or not rel_upper:
-                # This is an employee — assign sequential row_no if missing
-                if row.row_no is None:
-                    row.row_no = idx + 1
-                last_ee_row_index = row.row_no
-            else:
-                # This is a dependent (SP, CH, etc.) — link to last employee
-                if row.dependent_of_employee_number is None and last_ee_row_index is not None:
-                    row.dependent_of_employee_number = last_ee_row_index
+    import uuid
+    current_subscriber_id = None
+    last_ee_row_index = None
+
+    for idx, row in enumerate(rows):
+        rel_upper = (row.relationship or "").strip().upper()
+        is_self = rel_upper in ("EE", "EMPLOYEE", "SELF", "SUBSCRIBER", "MEMBER", "") or not rel_upper
+        
+        if is_self:
+            current_subscriber_id = uuid.uuid4().hex
+            if row.row_no is None:
+                row.row_no = idx + 1
+            last_ee_row_index = row.row_no
+        
+        row.subscriber_id = current_subscriber_id
+        
+        if not is_self and not has_dep_of_col and has_any_relationship:
+            if row.dependent_of_employee_number is None and last_ee_row_index is not None:
+                row.dependent_of_employee_number = last_ee_row_index
 
     return rows
 

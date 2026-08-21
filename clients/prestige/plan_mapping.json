@@ -1,0 +1,80 @@
+{
+  "product_type_classification": {
+    "medical": "medical",
+    "health": "medical",
+    "hmo": "medical",
+    "ppo": "medical",
+    "epo": "medical",
+    "dental": "dental",
+    "vision": "vision",
+    "life": "life",
+    "life/ad&d": "life",
+    "ad&d": "life",
+    "basic life": "life",
+    "ltd": "ltd",
+    "long term disability": "ltd",
+    "std": "std",
+    "short term disability": "std",
+    "eap": "ignore",
+    "fsa": "ignore",
+    "hsa": "ignore",
+    "cobra": "ignore",
+    "401k": "ignore",
+    "retirement": "ignore"
+  },
+  "plan_category_rules": [
+    [
+      "dental",
+      [
+        "dental"
+      ]
+    ],
+    [
+      "vision",
+      [
+        "vision"
+      ]
+    ],
+    [
+      "life",
+      [
+        "life",
+        "ltc rider",
+        "whole life"
+      ]
+    ],
+    [
+      "ltd",
+      [
+        "ltd"
+      ]
+    ],
+    [
+      "std",
+      [
+        "std"
+      ]
+    ],
+    [
+      "medical",
+      [
+        "aet metro",
+        "metro ntl",
+        "epo",
+        "mcp",
+        "hmo",
+        "ppo medical",
+        "medical",
+        "pos",
+        "chc",
+        "hdhp",
+        "copay"
+      ]
+    ],
+    [
+      "voluntary_other",
+      []
+    ]
+  ],
+  "medical_premium_inference_threshold": 200.0
+}

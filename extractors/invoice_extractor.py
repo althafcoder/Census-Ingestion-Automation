@@ -13,42 +13,74 @@ is then parsed into structured JSON by GPT-4o-mini.
 from __future__ import annotations
 
 import json
+import uuid
+from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
-from typing import Optional
 
 import openai
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, Field
 
 load_dotenv()
 
 
-class PlanLine(BaseModel):
-    model_config = ConfigDict(populate_by_name=True, coerce_numbers_to_str=True)
-    
+@dataclass
+class PlanLine:
     plan_name: str
-    coverage_tier: Optional[str] = None
+    coverage_tier: str
     month: str
-    line_type: Optional[str] = None
-    total_monthly_due: float
-    employee_contribution: float
-    employer_contribution: float
-    adjusted_amount_due: float
+    line_type: str | None
+    total_monthly_due: Decimal
+    employee_contribution: Decimal
+    employer_contribution: Decimal
+    adjusted_amount_due: Decimal
 
 
-class EmployeeBenefits(BaseModel):
-    model_config = ConfigDict(populate_by_name=True, coerce_numbers_to_str=True)
-    
-    last_name: str
-    first_name: str
-    employee_id: str
-    status: Optional[str] = None
-    plans: list[PlanLine] = Field(default_factory=list)
+@dataclass
+class EmployeeBenefits:
+    uid: str = field(default_factory=lambda: uuid.uuid4().hex)
+    last_name: str = ""
+    first_name: str = ""
+    employee_id: str = ""
+    status: str | None = None
+    plans: list[PlanLine] = field(default_factory=list)
 
     @property
     def full_name_key(self) -> str:
         """Normalized 'first last' key used for cross-file matching."""
         return f"{self.first_name.strip().lower()} {self.last_name.strip().lower()}"
+
+
+@dataclass
+class InvoiceExtractionResult:
+    """Separates current billing subscribers from prior-period adjustments."""
+    current_subscribers: list[EmployeeBenefits] = field(default_factory=list)
+    prior_period_adjustments: list[EmployeeBenefits] = field(default_factory=list)
+    total_subscribers_reported: int | None = None
+
+
+def _classify_page_section(page_text: str) -> str:
+    """Classify a page chunk as 'prior_period' or 'billing_detail'.
+    
+    Uses section headers from the invoice to determine which section
+    the page belongs to.
+    """
+    text_upper = page_text.upper()
+    if "BILLING DETAIL" in text_upper:
+        return "billing_detail"
+    if "PRIOR PERIOD COVERAGE ADJUSTMENT" in text_upper:
+        return "prior_period"
+    # Default to billing detail if we can't determine
+    return "billing_detail"
+
+
+def _extract_total_subscribers(raw_text: str) -> int | None:
+    """Extract the reported total subscriber count from billing totals line."""
+    import re
+    match = re.search(r'Billing Totals:\s*(\d+)\s*Total Subscribers', raw_text)
+    if match:
+        return int(match.group(1))
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +96,7 @@ For each employee, extract:
 - "status": Any status like "Termination", "Newly Eligible", "New Hire" etc. (use null if not present).
 - "plans": An array of plan lines, where each plan has:
   - "plan_name": The full plan/product name as shown (e.g. "AET DENTAL MID PPO", "METL ER LTD 180D 2K", "Medical HMO Gold")
-  - "coverage_tier": The coverage tier code (e.g. "EE", "FAM", "EE+CH", "EE+SP", "EE+S/D", "EC", "ES", "SINGLE", "FAMILY", "EMPLOYEE", "EMP+SPOUSE", "EMP+CHILD"). Use "" if not shown.
+  - "coverage_tier": The exact coverage tier code as written (e.g. "M1", "M3", "V1", "EE", "FAM", "ES", "SINGLE", "FAMILY"). Do NOT translate or interpret it. Use "" if not shown.
   - "total_due": The base monthly premium/charge amount for the current period as a number (e.g. 45.00). Extract this from columns labeled "Charge Amount", "Current", "Premium Amount", or "Renewal Amount". Do NOT use the "Total" column if adjustments are present. Use 0.0 if not shown.
   - "ee_contribution": The employee contribution amount as a number. Use 0.0 if not shown.
   - "er_contribution": The employer contribution amount as a number. Use 0.0 if not shown.
@@ -77,34 +109,19 @@ IMPORTANT RULES:
 5. Ignore page headers, footers, totals lines, and other boilerplate.
 6. If the same employee appears multiple times (e.g. across page breaks), combine their plan lines.
 7. Be precise with dollar amounts — extract exact values from the text.
-8. If the invoice is formatted as a wide table (like Markdown) where column headers represent plan categories (e.g., "Medical", "Vision", "Life & ADD"): You MUST create a SEPARATE plan object in the `plans` array for EVERY amount found across the columns. Use the column header as the `plan_name` and the amount as the `total_due`. Do NOT combine different plans into a single plan object by putting the amounts into `ee_contribution` or `er_contribution`. DO NOT create a plan object if the cell for that plan category is empty. VERY IMPORTANT: OCR often misses empty cells, causing the remaining amounts to shift left into the wrong columns. If a row has an amount like "2.98", look at the table headers. Medical premiums are typically >$100, while Life/AD&D premiums are typically <$10. If an amount is clearly for Life/AD&D (e.g. 2.98) but it shifted into the "Medical" or "Elections" column due to a missing pipe/cell, you MUST correctly assign it to the "Life & ADD" plan_name, NOT "Medical" or "Elections".
-9. If there is an 'Elections' column containing multiple tier codes (e.g., "M1;V1;" or "M1; V1"), split them up and map them strictly to their respective plans. For example, assign "M1" to the Medical plan's `coverage_tier`, and "V1" to the Vision plan's `coverage_tier`. Do not dump the entire string into a single plan's tier.
+8. If the invoice is formatted as a wide table (like Markdown) where column headers represent plan categories (e.g., "Medical", "Vision", "Life & ADD"): You MUST create a SEPARATE plan object in the `plans` array for EVERY amount found across the columns. Use the column header as the `plan_name` and the amount as the `total_due`. Do NOT combine different plans into a single plan object by putting the amounts into `ee_contribution` or `er_contribution`. DO NOT create a plan object if the cell for that plan category is empty. VERY IMPORTANT: OCR often misses empty cells, causing the remaining amounts to shift left into the wrong columns. If a row has an amount like "2.98", look at the table headers. Medical premiums are typically >$100, while Life/AD&D premiums are typically <$10. If an amount is clearly for Life/AD&D (e.g. 2.98) but it shifted into the "Medical" or "Elections" column due to a missing pipe/cell, you MUST correctly assign it to the "Life & ADD" plan_name, NOT "Medical" or "Elections". CRITICAL FOR LIFE: Every single employee row MUST have a Life plan extracted if a small amount like 2.98 is present. Even if there are no other benefits on that row, if you see a standalone 2.98 next to an employee's name, you MUST create a plan with `plan_name`='Life & ADD' and `total_due`=2.98.
+9. If there is an 'Elections' column containing multiple tier codes (e.g., "M1;V1;" or "M1; V1"), split them up and map them strictly to their respective plans. For example, assign "M1" to the Medical plan's `coverage_tier`, and "V1" to the Vision plan's `coverage_tier`. Do not dump the entire string into a single plan's tier. CRITICAL: When splitting composite tier codes, DO NOT duplicate the premium amount. The amounts listed on the row belong to the plans sequentially. For example, if the row has "M1;V1 298.86 6.21", assign 298.86 as the Medical `total_due` and 6.21 as the Vision `total_due`. NEVER assign 298.86 to both Medical and Vision.
 10. IGNORE "Prior Period Coverage Adjustments", retro adjustments, credits, and combined "Total" columns. You must extract ONLY the base charge amount for the current period (from "Charge Amount", "Current Detail", or "Premium Amount"). If an invoice has a "Totals" column and a "Charge Amount" column, always use the "Charge Amount" for `total_due`. NEVER extract negative numbers (e.g. -546.01). If you see a negative number, it is an adjustment or credit and MUST be ignored. ONLY extract the positive base premium amount for the current period.
-11. Use the following coverage type definitions as a reference when interpreting tier codes:
-    - EE: Employee Only
-    - ES: Employee and Spouse
-    - ESC: Employee and Family
-    - EC: Employee and Child(ren)
-    - E1D: Employee and One Dependent
-    - E2D: Employee and Two Dependents
-    - E4D: Employee and Four Dependents
-    - E5D: Employee & One or More Dependent
-    - E6D: Employee & Two or More Dependents
-    - E7D: Employee & Three or More Dependents
-    - E8D: Employee & Four or More Dependents
-    - E9D: Employee & Five or More Dependents
-
-CRITICAL PLAN NAME RULES — YOU MUST FOLLOW THESE EXACTLY:
-12. Extract the COMPLETE plan name exactly as written in the source document. NEVER truncate, abbreviate, or partially extract a plan name.
-13. Plan names often contain multiple segments separated by spaces, including codes, numbers, suffixes, prefixes, deductible amounts, copay amounts, HSA/HRA designations, network identifiers, tiers, options, and version codes. You MUST include ALL of them.
+11. Extract the COMPLETE plan name exactly as written in the source document. NEVER truncate, abbreviate, or partially extract a plan name.
+12. Plan names often contain multiple segments separated by spaces, including codes, numbers, suffixes, prefixes, deductible amounts, copay amounts, HSA/HRA designations, network identifiers, tiers, options, and version codes. You MUST include ALL of them.
     - "CO S CHC NG 40/80/2500/70 EPO 25 DXG5" must NOT become "CO S CHC NG 40/80/2500/70 EPO" — the "25 DXG5" suffix is mandatory.
     - "CO B CHC + NG 6500/90 POS HSA 25 DXFG" must NOT become "CO B CHC" or omit any part.
     - "DENTAL Voluntary B3303" must NOT become "DENTAL" or "DENTAL Voluntary" — include "B3303".
     - "Vision 100% Voluntary S1043" must NOT become "Vision" or "Vision 100%" — include "Voluntary S1043".
     - "CO S DR P NG 125/3000/65 HMO 25 DXFA" must be extracted in full.
-14. If a plan name is split across multiple lines or cells in the table, concatenate ALL parts into one complete name.
-15. When a single table cell contains multiple plan names concatenated together (e.g., "Vision 100% Voluntary S1043 DENTAL Voluntary B3303 CO S CHC NG 40/80/2500/70 EPO 25 DXG5"), you MUST split them into SEPARATE plan entries. Each recognized plan gets its own plan object. Identify plan boundaries by looking for known plan type keywords (Vision, DENTAL, CO S, CO B, etc.).
-16. When a row has multiple employees or plans stacked (names repeated 2-3 times, plan names listed sequentially, IDs repeated), each plan-employee-charge tuple must be extracted separately. Match plans to their corresponding charge amounts in order.
+13. If a plan name is split across multiple lines or cells in the table, concatenate ALL parts into one complete name.
+14. When a single table cell contains multiple plan names concatenated together (e.g., "Vision 100% Voluntary S1043 DENTAL Voluntary B3303 CO S CHC NG 40/80/2500/70 EPO 25 DXG5"), you MUST split them into SEPARATE plan entries. Each recognized plan gets its own plan object. Identify plan boundaries by looking for known plan type keywords (Vision, DENTAL, CO S, CO B, etc.).
+15. When a row has multiple employees or plans stacked (names repeated 2-3 times, plan names listed sequentially, IDs repeated), each plan-employee-charge tuple must be extracted separately. Match plans to their corresponding charge amounts in order.
 
 Return a JSON object with this exact structure:
 {
@@ -384,11 +401,14 @@ def _process_llm_response(content: str) -> list[dict]:
             p_name = str(plan.get("plan_name", "")).strip().lower()
             due = float(plan.get("total_due") or 0.0)
             
-            # If it's a Medical plan with an impossibly small premium (< $10),
-            # it's almost certainly an OCR alignment hallucination where a Life/AD&D
-            # amount shifted left into the Medical column.
             if "medical" in p_name and 0 < due < 10.0:
                 plan["plan_name"] = "Life & ADD"
+                
+            # If the LLM extracted a tier as the plan name (e.g. for Nucor)
+            tier_keywords = ["family", "individual", "individual and children", "employee", "employee only"]
+            if p_name in tier_keywords and not str(plan.get("coverage_tier", "")).strip():
+                plan["coverage_tier"] = str(plan.get("plan_name", "")).strip().upper()
+                plan["plan_name"] = "Medical"  # Default to Medical if no plan name is present
                 
     return employees
 
@@ -423,13 +443,10 @@ def _merge_duplicate_employees(all_employee_dicts: list[dict]) -> list[dict]:
     for emp in all_employee_dicts:
         first = (emp.get("first_name") or "").strip().lower()
         last = (emp.get("last_name") or "").strip().lower()
-        emp_id = (emp.get("employee_id") or "").strip()
         
-        # Use employee_id if available, otherwise use name as key
-        if emp_id:
-            key = emp_id
-        else:
-            key = f"{first}|{last}"
+        # We must use name as the primary key. Using OCR'd SSN is unsafe
+        # because the OCR may hallucinate/duplicate the same SSN for different people.
+        key = f"{first}|{last}"
         
         if key in merged:
             # Append plan lines to existing employee
@@ -455,10 +472,10 @@ def _dict_to_employee_benefits(emp_dict: dict) -> EmployeeBenefits:
             coverage_tier=str(plan_dict.get("coverage_tier", "")).strip() or None,
             month="",  # LLM may not always extract month; not critical
             line_type=None,
-            total_monthly_due=float(plan_dict.get("total_due", 0.0)),
-            employee_contribution=float(plan_dict.get("ee_contribution", 0.0)),
-            employer_contribution=float(plan_dict.get("er_contribution", 0.0)),
-            adjusted_amount_due=float(plan_dict.get("total_due", 0.0)),
+            total_monthly_due=Decimal(str(plan_dict.get("total_due") or 0.0)),
+            employee_contribution=Decimal(str(plan_dict.get("ee_contribution") or 0.0)),
+            employer_contribution=Decimal(str(plan_dict.get("er_contribution") or 0.0)),
+            adjusted_amount_due=Decimal(str(plan_dict.get("total_due") or 0.0)),
         ))
     
     return EmployeeBenefits(
@@ -470,12 +487,16 @@ def _dict_to_employee_benefits(emp_dict: dict) -> EmployeeBenefits:
     )
 
 
-def extract_employee_benefits(pdf_path: Path, dump_raw_text_path: Path | None = None) -> list[EmployeeBenefits]:
+def extract_employee_benefits(pdf_path: Path, dump_raw_text_path: Path | None = None) -> InvoiceExtractionResult:
     """
-    Parse the invoice into a list of EmployeeBenefits records using Docling layout/OCR,
-    with a dynamic fallback to Rostaing OCR if the PDF text layer is corrupted.
+    Parse the invoice into an InvoiceExtractionResult separating current billing
+    subscribers from prior-period adjustments.
+    
+    Uses Docling layout/OCR, with a dynamic fallback to Rostaing OCR if the
+    PDF text layer is corrupted.
     """
     import fitz
+    import re as _re
     
     # Fast pre-check for corrupted text layer
     print(f"      -> Checking text layer integrity for {pdf_path.name}...")
@@ -489,7 +510,9 @@ def extract_employee_benefits(pdf_path: Path, dump_raw_text_path: Path | None = 
         print(f"      -> Warning: PyMuPDF check failed: {e}")
         is_corrupted = False
 
-    all_employee_dicts = []
+    current_employee_dicts = []
+    prior_employee_dicts = []
+    full_raw_text = ""
     
     if is_corrupted:
         print(f"      -> Corrupted text layer detected (missing ToUnicode mappings).")
@@ -505,27 +528,29 @@ def extract_employee_benefits(pdf_path: Path, dump_raw_text_path: Path | None = 
                 sys.executable, "-c",
                 f'from rostaing_ocr import ocr_extractor; ocr_extractor(r"""{pdf_path.absolute()}""", r"""{out_file.absolute()}""", save_file=True)'
             ]
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            if res.returncode != 0:
+                print(f"      -> Rostaing OCR failed with return code {res.returncode}. STDERR: {res.stderr}")
+                raise Exception(f"Command returned non-zero exit status {res.returncode}")
             
             full_raw_text = out_file.read_text(encoding="utf-8")
-        except subprocess.CalledProcessError as e:
-            print(f"      -> Error running Rostaing OCR: {e}")
-            print(f"      -> stderr: {e.stderr}")
-            full_raw_text = ""
         except Exception as e:
             print(f"      -> Error running Rostaing OCR: {e}")
             full_raw_text = ""
             
         # Split by page markers (e.g. "--- Page 5 ---") to keep LLM context size manageable
-        import re
-        pages = re.split(r'(?=\n--- Page \d+ ---)', full_raw_text)
+        pages = _re.split(r'(?=\n--- Page \d+ ---)', full_raw_text)
         
         for i, page_text in enumerate(pages, start=1):
             if not page_text.strip():
                 continue
-            print(f"      -> Processing OCR page chunk {i}/{len(pages)}...")
+            section = _classify_page_section(page_text)
+            print(f"      -> Processing OCR page chunk {i}/{len(pages)} [{section}]...")
             emp_dicts = _extract_via_llm_text(page_text, f"chunk {i}")
-            all_employee_dicts.extend(emp_dicts)
+            if section == "prior_period":
+                prior_employee_dicts.extend(emp_dicts)
+            else:
+                current_employee_dicts.extend(emp_dicts)
             print(f"      -> Chunk {i}: extracted {len(emp_dicts)} employees")
             
     else:
@@ -578,25 +603,45 @@ def extract_employee_benefits(pdf_path: Path, dump_raw_text_path: Path | None = 
                     
             if not page_md.strip():
                 continue
-                
+            
+            section = _classify_page_section(page_md)
+            print(f"      -> Page {i}/{num_pages} [{section}]")
             emp_dicts = _extract_via_llm_text(page_md, f"page {i}")
-            all_employee_dicts.extend(emp_dicts)
+            if section == "prior_period":
+                prior_employee_dicts.extend(emp_dicts)
+            else:
+                current_employee_dicts.extend(emp_dicts)
             print(f"      -> Page {i}/{num_pages}: extracted {len(emp_dicts)} employees")
     
-    # Merge duplicates (employees spanning page breaks)
-    merged_dicts = _merge_duplicate_employees(all_employee_dicts)
+    # Merge duplicates SEPARATELY for current and prior (employees spanning page breaks)
+    merged_current = _merge_duplicate_employees(current_employee_dicts)
+    merged_prior = _merge_duplicate_employees(prior_employee_dicts)
     
     # Post-process: validate and fix plan names against known plans from Summary
-    full_raw_text = ""
-    if dump_raw_text_path and dump_raw_text_path.exists():
+    if not full_raw_text and dump_raw_text_path and dump_raw_text_path.exists():
         full_raw_text = dump_raw_text_path.read_text(encoding="utf-8")
     if full_raw_text:
-        merged_dicts = _validate_and_fix_plan_names(merged_dicts, full_raw_text)
+        merged_current = _validate_and_fix_plan_names(merged_current, full_raw_text)
+    
+    # Extract reported total subscriber count for validation
+    total_subscribers = _extract_total_subscribers(full_raw_text) if full_raw_text else None
     
     # Convert to EmployeeBenefits dataclasses
-    employees = [_dict_to_employee_benefits(d) for d in merged_dicts]
+    current = [_dict_to_employee_benefits(d) for d in merged_current]
+    prior = [_dict_to_employee_benefits(d) for d in merged_prior]
     
     # Filter out entries with no name
-    employees = [e for e in employees if e.first_name or e.last_name]
+    current = [e for e in current if e.first_name or e.last_name]
+    prior = [e for e in prior if e.first_name or e.last_name]
     
-    return employees
+    print(f"      -> Section classification: {len(current)} current subscribers, {len(prior)} prior-period adjustments")
+    if total_subscribers is not None:
+        print(f"      -> Invoice reports {total_subscribers} Total Subscribers")
+        if len(current) != total_subscribers:
+            print(f"      -> WARNING: INVOICE_CURRENT_SUBSCRIBER_COUNT_MISMATCH: extracted={len(current)}, reported={total_subscribers}")
+    
+    return InvoiceExtractionResult(
+        current_subscribers=current,
+        prior_period_adjustments=prior,
+        total_subscribers_reported=total_subscribers,
+    )
